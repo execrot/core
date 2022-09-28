@@ -91,7 +91,7 @@ class Controller
    */
   public function getParam(string $name, $default = null)
   {
-    return $this->getRequest()->getPost($name, $default)
+    return $this->getRequest()->getBodyVar($name, $default)
       ?? $this->getRequest()->getGet($name, $default)
       ?? $this->getRequest()->getUriParam($name, $default);
   }
@@ -118,7 +118,7 @@ class Controller
   public function getParams()
   {
     return array_merge(
-      $this->getRequest()->getPostAll(),
+      $this->getRequest()->getBody(),
       $this->getRequest()->getGetAll(),
       $this->getRequest()->getUriParams()
     );

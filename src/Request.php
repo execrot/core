@@ -45,7 +45,7 @@ class Request
   /**
    * @var array
    */
-  private array $postParams = [];
+  private array $body = [];
 
   /**
    * @var array
@@ -103,9 +103,6 @@ class Request
    */
   public function fillRequestFromServer()
   {
-    $this->getParams = array_filter($_GET);
-    $this->postParams = array_filter($_POST);
-
     foreach (getallheaders() as $key => $value) {
       $this->headers[strtolower($key)] = $value;
     }
@@ -123,6 +120,15 @@ class Request
     if (!empty($_SERVER['HTTP_X_REQUESTED_WITH'])
       && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
       $this->isAjax = true;
+    }
+
+    $this->getParams = array_filter($_GET);
+
+    if ($this->isPost()) {
+      $this->body = array_filter($_POST);
+
+    } else if ($this->isPut()) {
+      $this->body = $this->raw2array();
     }
 
     foreach ($_FILES as $key => $file) {
@@ -203,17 +209,17 @@ class Request
    * @param mixed|null $default
    * @return mixed
    */
-  public function getPost(string $key, mixed $default = null): mixed
+  public function getBodyVar(string $key, mixed $default = null): mixed
   {
-    return $this->postParams[$key] ?? $default;
+    return $this->body[$key] ?? $default;
   }
 
   /**
    * @return array
    */
-  public function getPostAll(): array
+  public function getBody(): array
   {
-    return $this->postParams;
+    return $this->body;
   }
 
   /**
@@ -464,5 +470,40 @@ class Request
   public function getFiles(): array
   {
     return $this->files ?? [];
+  }
+
+  /**
+   * @return array
+   */
+  private function raw2array(): array
+  {
+    $aData = [];
+    $input = file_get_contents('php://input');
+    preg_match('/boundary=(.*)$/', $_SERVER['CONTENT_TYPE'], $matches);
+    $boundary = $matches[1];
+    $aBlocks = preg_split("/-+$boundary/", $input);
+    array_pop($aBlocks);
+
+    foreach ($aBlocks as $id => $block) {
+      if (empty($block)) {
+        continue;
+      }
+      if (strpos($block, 'application/octet-stream') !== FALSE) {
+        // match "name", then everything after "stream" (optional) except for prepending newlines
+        preg_match("/name=\"([^\"]*)\".*stream[\n|\r]+([^\n\r].*)?$/s", $block, $matches);
+
+      } // parse all other fields
+      else {
+        // match "name" and optional value in between newline sequences
+        preg_match('/name=\"([^\"]*)\"[\n|\r]+([^\n\r].*)?\r$/s', $block, $matches);
+      }
+      $aData[$matches[1]] = $matches[2];
+    }
+
+    $aData = http_build_query($aData);
+    $aData = urldecode($aData);
+    parse_str($aData, $aData);
+
+    return $aData;
   }
 }

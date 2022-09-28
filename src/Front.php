@@ -6,6 +6,7 @@ namespace Light\Core;
 
 use Exception;
 use Error;
+use Throwable;
 
 use Light\Core\Exception\ActionMethodWasNotFound;
 use Light\Core\Exception\InjectorParamRequired;
@@ -461,7 +462,9 @@ final class Front
         $args[$var] = $injector[$var]($router->getUrlParams()[$var] ?? null);
       } else {
 
-        $value = $router->getUrlParams()[$var] ?? $request->getGet($var);
+        $value = $request->getUriParam($var)
+          ?? $request->getGet($var)
+          ?? $request->getBodyVar($var);
 
         if (!$parameter->getType()) {
           $args[$var] = $value;
@@ -488,7 +491,7 @@ final class Front
 
             try {
               $args[$var] = new $className($value);
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
               $args[$var] = $value;
             }
         }
