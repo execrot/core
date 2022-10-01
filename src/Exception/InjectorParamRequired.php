@@ -13,6 +13,6 @@ class InjectorParamRequired extends Exception
    */
   public function __construct(string $var)
   {
-    parent::__construct($var, 400);
+    parent::__construct('InjectorParamRequired: ' . $var, 400);
   }
 }

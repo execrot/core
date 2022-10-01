@@ -7,6 +7,7 @@ namespace Light\Core;
 use Exception;
 use Error;
 use Throwable;
+use Closure;
 
 use Light\Core\Exception\ActionMethodWasNotFound;
 use Light\Core\Exception\InjectorParamRequired;
@@ -58,6 +59,11 @@ final class Front
    * @var Router
    */
   private $router = null;
+
+  /**
+   * @var Closure[]
+   */
+  private $injectors = [];
 
   /**
    * Front constructor.
@@ -170,6 +176,16 @@ final class Front
   }
 
   /**
+   * @param string $type
+   * @param Closure $closure
+   * @return void
+   */
+  public function registerInjector(string $type, Closure $closure)
+  {
+    $this->injectors[$type] = $closure;
+  }
+
+  /**
    * @return $this
    * @throws ReflectionException
    */
@@ -267,6 +283,8 @@ final class Front
         throw new ControllerClassWasNotFound($controllerClassName);
       }
 
+      $this->runModuleBootstrap($this->router);
+
       /** @var Controller|ErrorController $controller */
       $controller = new $controllerClassName();
 
@@ -277,12 +295,12 @@ final class Front
       if ($exception && is_subclass_of($controller, ErrorController::class)) {
         $controller->setException($exception);
         $controller->setExceptionEnabled($this->config['light']['exception'] ?? false);
+
       } else if ($exception) {
         throw $exception;
       }
 
       /** @var Plugin[] $plugins */
-
       $plugins = [];
 
       $pluginsPaths = [
@@ -291,7 +309,6 @@ final class Front
       ];
 
       if ($modules) {
-
         $pluginsPaths['\\' . $this->config['light']['loader']['namespace'] . '\\' . $modules . '\\' .
         ucfirst($this->router->getModule()) . '\\Plugin\\'] =
           realpath(implode('/', [
@@ -372,6 +389,41 @@ final class Front
    * @param Router $router
    * @return string
    */
+  public function runModuleBootstrap(Router $router): void
+  {
+    if ($this->config['light']['modules'] ?? false) {
+      $moduleBootstrap = implode('\\', [
+        $this->config['light']['modules'],
+        ucfirst($router->getModule()),
+        'Bootstrap'
+      ]);
+
+      try {
+        if (class_exists($moduleBootstrap, true)) {
+
+          /** @var BootstrapAbstract $bootstrap */
+          $bootstrap = new $moduleBootstrap();
+
+          if ($bootstrap instanceof BootstrapAbstract) {
+            $bootstrap->setConfig($this->config);
+
+            $bootReflection = new ReflectionClass($bootstrap);
+            foreach ($bootReflection->getMethods() as $method) {
+              if ($method->class != BootstrapAbstract::class) {
+                $bootstrap->{$method->name}();
+              }
+            }
+          }
+        }
+      } catch (Throwable $e) {
+      }
+    }
+  }
+
+  /**
+   * @param Router $router
+   * @return string
+   */
   public function getControllerClassName(Router $router): string
   {
     $module = $router->getModule();
@@ -424,7 +476,7 @@ final class Front
   public function inject(Controller $controller, Router $router, Request $request)
   {
     $reflection = new ReflectionMethod($controller, $router->getAction());
-    $injector = $router->getInjector();
+    $routerInjector = $router->getInjector();
 
     $params = [];
 
@@ -458,10 +510,10 @@ final class Front
 
       $var = $parameter->getName();
 
-      if (isset($injector[$var])) {
+      if (isset($routerInjector[$var])) {
         $args[$var] = $injector[$var]($router->getUrlParams()[$var] ?? null);
-      } else {
 
+      } else {
         $value = $request->getUriParam($var)
           ?? $request->getGet($var)
           ?? $request->getBodyVar($var);
@@ -482,23 +534,30 @@ final class Front
             break;
 
           case 'bool':
-            $args[$var] = $value ? boolval($value) : null;
+            $args[$var] = boolval(intval($value));
             break;
 
           default:
-
-            $className = $parameter->getType()->getName();
-
             try {
-              $args[$var] = new $className($value);
+              if ($injector = ($this->injectors[$parameter->getType()->getName()] ?? false)) {
+                $args[$var] = $injector($parameter, $value);
+              }
+
+            } catch (InjectorParamRequired $injectorParamRequired) {
+              throw $injectorParamRequired;
+
             } catch (Throwable $e) {
               $args[$var] = $value;
             }
         }
       }
-
-      if (is_null($args[$var]) && !$parameter->allowsNull()) {
-        throw new InjectorParamRequired($var);
+      if (is_null(($args[$var] ?? null)) && !$parameter->allowsNull()) {
+        if ($parameter->isDefaultValueAvailable()) {
+          $args[$var] = $parameter->getDefaultValue();
+          
+        } else {
+          throw new InjectorParamRequired($var);
+        }
       }
     }
 
